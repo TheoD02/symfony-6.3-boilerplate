@@ -1,0 +1,125 @@
+name: Deploy of Live Environment (PR test) 🚀
+
+on:
+  pull_request:
+    types:
+      - synchronize
+      - opened
+      - edited
+      - closed
+
+run-name: Live Environment Deploy (PR N°${{ github.event.number }}) 🚀
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  deploy-to-live:
+    name: Deploy PR N°${{ github.event.number }} to Live Environment 🚀
+    if: ${{ github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.action == 'edited' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v3
+      - name: 🖥️ Create sub-domain for PR N°${{ github.event.number }} (${{ github.event.number }}.alls-corp.fr)
+        uses: CamiloGarciaLaRotta/watermelon-http-client@v1
+        with:
+          url: 'https://cactus.o2switch.net:2083/execute/SubDomain/addsubdomain?domain=pr-${{ github.event.number }}&rootdomain=alls-corp.fr&dir=/deployments/live/${{ github.repository_id }}/pr-${{ github.event.number }}/public'
+          headers: '{"Authorization": "${{ secrets.O2_API_AUTH }}"}'
+      - name: 🔄 Deploy files to Live Server
+        uses: burnett01/rsync-deployments@6.0.0
+        with:
+          switches: -avzr --delete
+          path: "./"
+          remote_path: ~/deployments/live/${{ github.repository_id }}/pr-${{ github.event.number }}/"
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USERNAME }}
+          remote_key: ${{ secrets.SSH_REMOTE_KEY }}
+          remote_port: 35000
+
+  install-back-deps:
+    name: Install Composer Dependencies 📦
+    if: ${{ github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.action == 'edited' }}
+    runs-on: ubuntu-latest
+    needs: [ deploy-to-live ]
+    steps:
+      - name: 📦 Install Composer Dependencies
+        uses: appleboy/ssh-action@v0.1.10
+        env:
+          APP_ENV: prod
+          APP_DEBUG: 0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          port: 35000
+          key: ${{ secrets.SSH_REMOTE_KEY }}
+          envs: APP_ENV,APP_DEBUG
+          script: |
+            cd ~/deployments/live/${{ github.repository_id }}/pr-${{ github.event.number }}/"
+            /opt/cpanel/composer/bin/composer install --no-interaction --prefer-dist --no-suggest --no-dev --optimize-autoloader
+            /usr/local/bin/php bin/console cache:clear --no-warmup
+            /usr/local/bin/php bin/console cache:warmup
+
+  install-front-deps:
+    name: Install Npm Dependencies 🖼️
+    if: ${{ github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.action == 'edited' }}
+    runs-on: ubuntu-latest
+    needs: [ deploy-to-live ]
+    steps:
+      - name: 🖼️ Install Npm Dependencies
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          port: 35000
+          key: ${{ secrets.SSH_REMOTE_KEY }}
+          script: |
+            cd ~/deployments/live/${{ github.repository_id }}/pr-${{ github.event.number }}/"
+            /opt/alt/alt-nodejs16/root/usr/bin/npm install
+            /opt/alt/alt-nodejs16/root/usr/bin/npm run build
+
+  add-comment-to-pr:
+    name: Add comment to PR N°${{ github.event.number }} 📨
+    if: ${{ github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.action == 'edited' }}
+    runs-on: ubuntu-latest
+    needs: [ deploy-to-live, install-back-deps, install-front-deps ]
+    environment:
+      name: PR-TEST
+      url: ${{ inputs.environment == 'preprod' && vars.PREPROD_URL || vars.PROD_URL  }}
+    steps:
+      - name: 📨 Create comment
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.number }}
+          body: |
+            L'environnement est disponible à l'adresse [pr-${{ github.event.number }}.alls-corp.fr][1]
+            
+            Il est en cours de déploiement, celui-ci sera disponible dans les prochaine minutes...
+
+            [1]: http://pr-${{ github.event.number }}.alls-corp.fr/
+
+  remove-live:
+    name: Remove PR N°${{ github.event.number }} from Live Environment 🗑️
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v3
+      - name: 🗑️ Remove sub-domain for PR N°${{ github.event.number }} (${{ github.event.number }}.alls-corp.fr)
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          port: 35000
+          key: ${{ secrets.SSH_REMOTE_KEY }}
+          script: |
+            rm -rf ~/deployments/live/${{ github.repository_id }}/pr-${{ github.event.number }}/
+      - name: 📨 Create comment
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.number }}
+          body: |
+            L'environnement [pr-${{ github.event.number }}.alls-corp.fr][1] va être supprimer dans les prochaine minutes !
+            
+            [1]: http://pr-${{ github.event.number }}.alls-corp.fr/

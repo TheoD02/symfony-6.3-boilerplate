@@ -1,0 +1,82 @@
+name: Deployment of Preprod and Prod 🚀
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "On which environment do you want to deploy?"
+        required: true
+        default: "preprod"
+        type: choice
+        options:
+          - "preprod"
+          - "prod"
+
+env:
+  PROJECT_NAME: "TEST"
+
+run-name: Deploy to ${{ inputs.environment }} by @${{ github.actor }} 🚀
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-to-server:
+    name: Deploy files to ${{ inputs.environment }} Server 🚀
+    #if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment == 'preprod' && 'Preprod' || 'Prod' }}
+      url: ${{ inputs.environment == 'preprod' && vars.PREPROD_URL || vars.PROD_URL  }}
+    steps:
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v3
+      - name: 🔄 Syncing files with server
+        uses: burnett01/rsync-deployments@6.0.0
+        with:
+          switches: -avzr --delete
+          path: "./"
+          remote_path: ~/sites/test-dir/${{ inputs.environment }}/
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USERNAME }}
+          remote_key: ${{ secrets.SSH_REMOTE_KEY }}
+          remote_port: 35000
+
+  install-back-deps:
+    name: Composer Install 📦
+    runs-on: ubuntu-latest
+    needs: [deploy-to-server]
+    steps:
+      - name: 📦 Composer Install
+        uses: appleboy/ssh-action@v0.1.10
+        env:
+          APP_ENV: prod
+          APP_DEBUG: 0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          port: 35000
+          key: ${{ secrets.SSH_REMOTE_KEY }}
+          envs: APP_ENV,APP_DEBUG
+          script: |
+            cd ~/sites/test-dir/${{ inputs.environment }}/
+            /opt/cpanel/composer/bin/composer install --no-interaction --prefer-dist --no-suggest --no-dev --optimize-autoloader
+            /usr/local/bin/php bin/console cache:clear --no-warmup
+            /usr/local/bin/php bin/console cache:warmup
+
+  install-front-deps:
+    name: Install and Build Front 🖼️
+    runs-on: ubuntu-latest
+    needs: [deploy-to-server]
+    steps:
+      - name: 🖼️ Install and Build Front
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          port: 35000
+          key: ${{ secrets.SSH_REMOTE_KEY }}
+          script: |
+            cd ~/sites/test-dir/${{ inputs.environment }}/
+            /opt/alt/alt-nodejs16/root/usr/bin/npm install
+            /opt/alt/alt-nodejs16/root/usr/bin/npm run build
