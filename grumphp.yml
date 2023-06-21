@@ -93,6 +93,7 @@ grumphp:
       ignore_patterns: [ ]
       detect_key_conflicts: false
     twigcs:
+      path: src/
     yamllint:
       metadata:
         label: 'Check YAML files (yamllint)'

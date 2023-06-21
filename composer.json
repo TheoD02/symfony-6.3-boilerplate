@@ -45,6 +45,7 @@
     "require-dev": {
         "ergebnis/composer-normalize": "^2.31",
         "friendsofphp/php-cs-fixer": "^3.17",
+        "friendsoftwig/twigcs": ">=4",
         "maglnet/composer-require-checker": "^4.6",
         "phpro/grumphp": "^1.16",
         "phpstan/extension-installer": "^1.3",
